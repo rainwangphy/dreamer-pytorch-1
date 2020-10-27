@@ -1,12 +1,12 @@
 from typing import Optional, List
-import torch
-from torch import jit, nn
-from torch.nn import functional as F
-import torch.distributions
-from torch.distributions.normal import Normal
-from torch.distributions.transforms import Transform, TanhTransform
-from torch.distributions.transformed_distribution import TransformedDistribution
+
 import numpy as np
+import torch
+import torch.distributions
+from torch import jit, nn
+from torch.distributions.normal import Normal
+from torch.distributions.transformed_distribution import TransformedDistribution
+from torch.nn import functional as F
 
 
 # Wraps the input tuple for a function to process a time x batch x features sequence in batch x features (assumes one output)
@@ -47,13 +47,12 @@ class TransitionModel(jit.ScriptModule):
     # s : -x--X--X--X--X--X-
     @jit.script_method
     def forward(self, prev_state: torch.Tensor, actions: torch.Tensor, prev_belief: torch.Tensor,
-                observations: Optional[torch.Tensor] = None, nonterminals: Optional[torch.Tensor] = None) -> List[
-        torch.Tensor]:
-        '''
+                observations: Optional[torch.Tensor] = None, nonterminals: Optional[torch.Tensor] = None) -> List[torch.Tensor]:
+        """
         Input: init_belief, init_state:  torch.Size([50, 200]) torch.Size([50, 30])
         Output: beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs
                 torch.Size([49, 50, 200]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30]) torch.Size([49, 50, 30])
-        '''
+        """
         # Create lists for hidden states (cannot use single tensor as buffer because autograd won't work with inplace writes)
         T = actions.size(0) + 1
         beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = [
@@ -326,7 +325,7 @@ class SampleDist:
         return getattr(self._dist, name)
 
     def mean(self):
-        sample = dist.rsample()
+        sample = self._dist.rsample()
         return torch.mean(sample, 0)
 
     def mode(self):

@@ -33,7 +33,7 @@ def _images_to_observation(images, bit_depth):
     return images.unsqueeze(dim=0)  # Add batch dimension
 
 
-class ControlSuiteEnv():
+class ControlSuiteEnv:
     def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
         from dm_control import suite
         from dm_control.suite.wrappers import pixels
@@ -100,7 +100,7 @@ class ControlSuiteEnv():
         return torch.from_numpy(np.random.uniform(spec.minimum, spec.maximum, spec.shape))
 
 
-class GymEnv():
+class GymEnv:
     def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
         import gym
         self.symbolic = symbolic

@@ -1,19 +1,21 @@
 import argparse
 import os
+
 import numpy as np
 import torch
+from tensorboardX import SummaryWriter
 from torch import nn, optim
 from torch.distributions import Normal
 from torch.distributions.kl import kl_divergence
 from torch.nn import functional as F
 from torchvision.utils import make_grid, save_image
 from tqdm import tqdm
+
 from env import CONTROL_SUITE_ENVS, Env, GYM_ENVS, EnvBatcher
 from memory import ExperienceReplay
 from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel, ValueModel, ActorModel
 from planner import MPCPlanner
-from utils import lineplot, write_video, imagine_ahead, lambda_return, FreezeParameters, ActivateParameters
-from tensorboardX import SummaryWriter
+from utils import lineplot, write_video, imagine_ahead, lambda_return, FreezeParameters
 
 # Hyperparameters
 parser = argparse.ArgumentParser(description='PlaNet or Dreamer')
@@ -79,11 +81,13 @@ parser.add_argument('--render', action='store_true', help='Render environment')
 args = parser.parse_args()
 args.overshooting_distance = min(args.chunk_size,
                                  args.overshooting_distance)  # Overshooting distance cannot be greater than chunk size
-print(' ' * 26 + 'Options')
-for k, v in vars(args).items():
-    print(' ' * 26 + k + ': ' + str(v))
 
-# Setup
+# # Print all parameters to the terminal
+# print(' ' * 26 + 'Options')
+# for k, v in vars(args).items():
+#     print(' ' * 26 + k + ': ' + str(v))
+
+# Setup the input & output file path
 results_dir = os.path.join('results', '{}_{}'.format(args.env, args.id))
 os.makedirs(results_dir, exist_ok=True)
 np.random.seed(args.seed)
@@ -95,6 +99,7 @@ if torch.cuda.is_available() and not args.disable_cuda:
 else:
     print("using CPU")
     args.device = torch.device('cpu')
+
 metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': [], 'test_rewards': [],
            'observation_loss': [], 'reward_loss': [], 'kl_loss': [], 'actor_loss': [], 'value_loss': []}
 
@@ -103,6 +108,7 @@ writer = SummaryWriter(summary_name.format(args.env, args.id))
 
 # Initialise training environment and experience replay memory
 env = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth)
+
 if args.experience_replay is not '' and os.path.exists(args.experience_replay):
     D = torch.load(args.experience_replay)
     metrics['steps'], metrics['episodes'] = [D.steps] * D.episodes, list(range(1, D.episodes + 1))
@@ -146,6 +152,8 @@ actor_optimizer = optim.Adam(actor_model.parameters(),
 value_optimizer = optim.Adam(value_model.parameters(),
                              lr=0 if args.learning_rate_schedule != 0 else args.value_learning_rate,
                              eps=args.adam_epsilon)
+
+# If there is existing model, loading it from files
 if args.models is not '' and os.path.exists(args.models):
     model_dicts = torch.load(args.models)
     transition_model.load_state_dict(model_dicts['transition_model'])
@@ -160,7 +168,7 @@ if args.algo == "dreamer":
     planner = actor_model
 else:
     planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates,
-                         args.top_candidates, transition_model, reward_model)
+                         args.top_candidates, transition_model, reward_model)  # This is for PlaNet
 global_prior = Normal(torch.zeros(args.batch_size, args.state_size, device=args.device),
                       torch.ones(args.batch_size, args.state_size, device=args.device))  # Global prior N(0, I)
 free_nats = torch.full((1,), args.free_nats, device=args.device)  # Allowed deviation in KL divergence
@@ -176,7 +184,7 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, belief,
     belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(
         dim=0)  # Remove time dimension from belief/state
     if args.algo == "dreamer":
-        action = planner.get_action(belief, posterior_state, det=not (explore))
+        action = planner.get_action(belief, posterior_state, det=not explore)
     else:
         action = planner(belief, posterior_state)  # Get action from planner(q(s_t|o≤t,a<t), p)
     if explore:
@@ -257,7 +265,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
         # transition loss
         div = kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)).sum(dim=2)
         kl_loss = torch.max(div, free_nats).mean(dim=(
-        0, 1))  # Note that normalisation by overshooting distance and weighting by overshooting distance cancel out
+            0, 1))  # Note that normalisation by overshooting distance and weighting by overshooting distance cancel out
         if args.global_kl_beta != 0:
             kl_loss += args.global_kl_beta * kl_divergence(Normal(posterior_means, posterior_std_devs),
                                                            global_prior).sum(dim=2).mean(dim=(0, 1))
@@ -286,13 +294,13 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
             kl_loss += (1 / args.overshooting_distance) * args.overshooting_kl_beta * torch.max((kl_divergence(
                 Normal(torch.cat(overshooting_vars[5], dim=1), torch.cat(overshooting_vars[6], dim=1)),
                 Normal(prior_means, prior_std_devs)) * seq_mask).sum(dim=2), free_nats).mean(dim=(0, 1)) * (
-                                   args.chunk_size - 1)  # Update KL loss (compensating for extra average over each overshooting/open loop sequence)
+                               args.chunk_size - 1)  # Update KL loss (compensating for extra average over each overshooting/open loop sequence)
             # Calculate overshooting reward prediction loss with sequence mask
             if args.overshooting_reward_scale != 0:
                 reward_loss += (1 / args.overshooting_distance) * args.overshooting_reward_scale * F.mse_loss(
                     bottle(reward_model, (beliefs, prior_states)) * seq_mask[:, :, 0],
                     torch.cat(overshooting_vars[2], dim=1), reduction='none').mean(dim=(0, 1)) * (
-                                           args.chunk_size - 1)  # Update reward loss (compensating for extra average over each overshooting/open loop sequence)
+                                       args.chunk_size - 1)  # Update reward loss (compensating for extra average over each overshooting/open loop sequence)
         # Apply linearly ramping learning rate schedule
         if args.learning_rate_schedule != 0:
             for group in model_optimizer.param_groups:
@@ -404,7 +412,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
         value_model.eval()
         # Initialise parallelised test environments
         test_envs = EnvBatcher(Env, (
-        args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth), {},
+            args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth), {},
                                args.test_episodes)
 
         with torch.no_grad():

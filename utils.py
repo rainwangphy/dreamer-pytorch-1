@@ -1,13 +1,14 @@
 import os
+from typing import Iterable
+
 import cv2
 import numpy as np
 import plotly
+import torch
 from plotly.graph_objs import Scatter
 from plotly.graph_objs.scatter import Line
-import torch
-from torch.nn import functional as F
-from typing import Iterable
 from torch.nn import Module
+from torch.nn import functional as F
 
 
 # Plots min, max and mean + standard deviation bars of a population over time

@@ -1,9 +1,10 @@
 import numpy as np
 import torch
+
 from env import postprocess_observation, preprocess_observation_
 
 
-class ExperienceReplay():
+class ExperienceReplay:
     def __init__(self, size, symbolic_env, observation_size, action_size, bit_depth, device):
         self.device = device
         self.symbolic_env = symbolic_env
